@@ -1,0 +1,48 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Xiaozhi AI Connection",
+        "description": "Choose how to connect to Xiaozhi AI.",
+        "data": {
+          "connection_type": "Connection type"
+        }
+      },
+      "poll": {
+        "title": "Activate Device",
+        "description": "Go to [xiaozhi.me](https://xiaozhi.me), add a new device, and enter the activation code:\n\n**{code}**\n\nClick Submit after entering the code."
+      },
+      "manual": {
+        "title": "Self-Hosted Server",
+        "description": "Enter your Xiaozhi server connection details.",
+        "data": {
+          "server_url": "Server URL",
+          "access_token": "Access Token (optional)",
+          "mcp_url": "MCP WebSocket URL (optional)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Unable to connect to the Xiaozhi server. Check the URL and token.",
+      "invalid_auth": "Invalid authentication. Check your access token.",
+      "invalid_url": "Invalid URL. Must start with ws:// or wss://.",
+      "activation_timeout": "Activation timed out. Make sure you entered the code on xiaozhi.me and try again."
+    },
+    "abort": {
+      "already_configured": "This Xiaozhi server is already configured.",
+      "cannot_connect": "Unable to connect to the Xiaozhi server after activation.",
+      "ota_failed": "OTA activation request failed: {error}"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Xiaozhi Options",
+        "data": {
+          "response_timeout": "Response timeout (seconds)",
+          "mcp_url": "MCP WebSocket URL (optional)"
+        }
+      }
+    }
+  }
+}

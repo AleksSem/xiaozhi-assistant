@@ -1,0 +1,14 @@
+{
+  "domain": "xiaozhi",
+  "name": "Xiaozhi AI Conversation",
+  "codeowners": ["@alekssem"],
+  "config_flow": true,
+  "after_dependencies": ["recorder"],
+  "dependencies": ["conversation", "stt", "tts"],
+  "documentation": "https://github.com/alekssem/xiaozhi-assistant",
+  "integration_type": "service",
+  "iot_class": "cloud_push",
+  "issue_tracker": "https://github.com/alekssem/xiaozhi-assistant/issues",
+  "requirements": ["websockets>=12.0"],
+  "version": "0.1.0"
+}
