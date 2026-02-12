@@ -107,16 +107,20 @@ class XiaozhiConversationEntity(XiaozhiBaseEntity, ConversationEntity):
                     response_text = "Sorry, an unexpected error occurred."
                     _LOGGER.exception("Unexpected error in Xiaozhi conversation")
 
-        # In voice mode, skip chat_log update to avoid triggering the delta
-        # listener which calls async_set_message_stream() and races with the
-        # non-streaming async_set_message() path → InvalidStateError.
-        if not is_voice_mode:
-            chat_log.async_add_assistant_content_without_tools(
-                AssistantContent(
-                    agent_id=user_input.agent_id,
-                    content=response_text,
-                )
+        # Voice mode: trigger streaming TTS path via delta_listener
+        # to bypass async_set_message() which can raise InvalidStateError.
+        # async_add_assistant_content_without_tools() is safe — it only
+        # fires subscribers, NOT the delta_listener.
+        if is_voice_mode and chat_log.delta_listener:
+            chat_log.delta_listener(chat_log, {"role": "assistant"})
+            chat_log.delta_listener(chat_log, {"content": response_text})
+
+        chat_log.async_add_assistant_content_without_tools(
+            AssistantContent(
+                agent_id=user_input.agent_id,
+                content=response_text,
             )
+        )
 
         response = intent.IntentResponse(language=user_input.language)
         response.async_set_speech(response_text)

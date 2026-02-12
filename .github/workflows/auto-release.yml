@@ -11,12 +11,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Delete old beta release
-        run: gh release delete beta --yes --cleanup-tag || true
+        run: |
+          gh release delete beta --yes --cleanup-tag 2>/dev/null || true
+          sleep 5
         env:
           GH_TOKEN: ${{ github.token }}
       - name: Create beta release
         run: |
           gh release create beta \
+            --target main \
             --title "Beta ($(date -u +%Y-%m-%d))" \
             --notes "Auto-generated from main branch ($(git rev-parse --short HEAD))" \
             --prerelease
