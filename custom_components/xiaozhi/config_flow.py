@@ -10,8 +10,6 @@ import textwrap
 import traceback
 import uuid
 from typing import Any
-from urllib.parse import urlparse
-
 import voluptuous as vol
 
 from homeassistant.config_entries import (
@@ -32,14 +30,11 @@ from .client import XiaozhiWebSocketClient
 from .const import (
     CONF_ACCESS_TOKEN,
     CONF_CLIENT_ID,
-    CONF_CONNECTION_TYPE,
     CONF_DEVICE_ID,
     CONF_MCP_URL,
     CONF_PROTOCOL_VERSION,
     CONF_RESPONSE_TIMEOUT,
     CONF_SERVER_URL,
-    CONNECTION_TYPE_CLOUD,
-    CONNECTION_TYPE_SELF_HOSTED,
     DEFAULT_PROTOCOL_VERSION,
     DEFAULT_RESPONSE_TIMEOUT,
     DOMAIN,
@@ -76,29 +71,8 @@ class XiaozhiConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Step 1: Choose connection type."""
-        if user_input is not None:
-            connection_type = user_input[CONF_CONNECTION_TYPE]
-
-            if connection_type == CONNECTION_TYPE_CLOUD:
-                return await self.async_step_activate()
-            return await self.async_step_manual()
-
-        return self.async_show_form(
-            step_id="user",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(
-                        CONF_CONNECTION_TYPE, default=CONNECTION_TYPE_CLOUD
-                    ): vol.In(
-                        {
-                            CONNECTION_TYPE_CLOUD: "Xiaozhi Cloud (xiaozhi.me)",
-                            CONNECTION_TYPE_SELF_HOSTED: "Self-hosted server",
-                        }
-                    ),
-                }
-            ),
-        )
+        """Start config flow — go directly to OTA activation."""
+        return await self.async_step_activate()
 
     async def async_step_activate(
         self, user_input: dict[str, Any] | None = None
@@ -207,70 +181,14 @@ class XiaozhiConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason=error)
 
         return self.async_create_entry(
-            title="Xiaozhi AI (Cloud)",
+            title="Xiaozhi AI",
             data={
-                CONF_CONNECTION_TYPE: CONNECTION_TYPE_CLOUD,
                 CONF_SERVER_URL: websocket_url,
                 CONF_ACCESS_TOKEN: access_token,
                 CONF_DEVICE_ID: self._device_id,
                 CONF_CLIENT_ID: self._client_id,
                 CONF_PROTOCOL_VERSION: DEFAULT_PROTOCOL_VERSION,
             },
-        )
-
-    async def async_step_manual(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Step 2c: Manual self-hosted server setup."""
-        errors: dict[str, str] = {}
-
-        if user_input is not None:
-            server_url = user_input[CONF_SERVER_URL].strip()
-            access_token = user_input.get(CONF_ACCESS_TOKEN, "")
-
-            # Validate URL scheme and hostname
-            parsed = urlparse(server_url)
-            if parsed.scheme not in ("ws", "wss") or not parsed.hostname:
-                errors["base"] = "invalid_url"
-            else:
-                device_id = _generate_device_id()
-                client_id = str(uuid.uuid4())
-
-                config = XiaozhiConfig(
-                    server_url=server_url,
-                    access_token=access_token,
-                    device_id=device_id,
-                    client_id=client_id,
-                )
-
-                error = await self._validate_connection(config)
-                if error:
-                    errors["base"] = error
-
-                if not errors:
-                    return self.async_create_entry(
-                        title="Xiaozhi AI (Self-hosted)",
-                        data={
-                            CONF_CONNECTION_TYPE: CONNECTION_TYPE_SELF_HOSTED,
-                            CONF_SERVER_URL: server_url,
-                            CONF_ACCESS_TOKEN: access_token,
-                            CONF_DEVICE_ID: device_id,
-                            CONF_CLIENT_ID: client_id,
-                            CONF_PROTOCOL_VERSION: DEFAULT_PROTOCOL_VERSION,
-                            CONF_MCP_URL: user_input.get(CONF_MCP_URL, ""),
-                        },
-                    )
-
-        return self.async_show_form(
-            step_id="manual",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_SERVER_URL): str,
-                    vol.Optional(CONF_ACCESS_TOKEN, default=""): str,
-                    vol.Optional(CONF_MCP_URL, default=""): str,
-                }
-            ),
-            errors=errors,
         )
 
     @staticmethod
@@ -303,7 +221,7 @@ class XiaozhiOptionsFlow(OptionsFlow):
     async def async_step_settings(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """General settings (timeout, MCP URL)."""
+        """General settings (timeout)."""
         if user_input is not None:
             return self.async_create_entry(
                 data={
@@ -315,10 +233,7 @@ class XiaozhiOptionsFlow(OptionsFlow):
         current_timeout = self.config_entry.options.get(
             CONF_RESPONSE_TIMEOUT, DEFAULT_RESPONSE_TIMEOUT
         )
-        current_mcp_url = self.config_entry.options.get(
-            CONF_MCP_URL,
-            self.config_entry.data.get(CONF_MCP_URL, ""),
-        )
+        current_mcp_url = self.config_entry.options.get(CONF_MCP_URL, "")
 
         return self.async_show_form(
             step_id="settings",
@@ -658,8 +573,5 @@ class XiaozhiOptionsFlow(OptionsFlow):
             CONF_RESPONSE_TIMEOUT: self.config_entry.options.get(
                 CONF_RESPONSE_TIMEOUT, DEFAULT_RESPONSE_TIMEOUT
             ),
-            CONF_MCP_URL: self.config_entry.options.get(
-                CONF_MCP_URL,
-                self.config_entry.data.get(CONF_MCP_URL, ""),
-            ),
+            CONF_MCP_URL: self.config_entry.options.get(CONF_MCP_URL, ""),
         }

@@ -68,7 +68,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             f"Could not connect to Xiaozhi server: {err}"
         ) from err
 
-    # Connect MCP WebSocket client if mcp_url is configured
     mcp_url = entry.options.get(CONF_MCP_URL) or entry.data.get(CONF_MCP_URL, "")
     mcp_ws_client: MCPWebSocketClient | None = None
     if mcp_url:
@@ -77,7 +76,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await mcp_ws_client.connect()
         except Exception:
             _LOGGER.warning("Could not connect to MCP endpoint: %s", mcp_url, exc_info=True)
-            # Non-fatal: main WS still works, MCP will reconnect in background
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {
@@ -102,9 +100,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         data = hass.data[DOMAIN].pop(entry.entry_id)
         client: XiaozhiWebSocketClient = data["client"]
         await client.disconnect()
-        mcp_ws_client: MCPWebSocketClient | None = data.get("mcp_client")
-        if mcp_ws_client:
-            await mcp_ws_client.disconnect()
+        mcp_client: MCPWebSocketClient | None = data.get("mcp_client")
+        if mcp_client:
+            await mcp_client.disconnect()
 
     return unload_ok
 

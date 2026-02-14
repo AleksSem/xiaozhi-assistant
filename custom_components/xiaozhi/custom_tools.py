@@ -149,6 +149,72 @@ TOOL_TEMPLATES: dict[str, dict[str, str]] = {
                         items.append({"title": title, "link": link, "description": desc})
             return {"news": items, "source": url}"""),
     },
+    "web_search": {
+        "label": "Web Search (DuckDuckGo)",
+        "name": "search_web",
+        "description": (
+            "Search the internet for information. Call this when the user"
+            " asks to find something online, look up facts, or search for any topic."
+        ),
+        "params_json": (
+            '{"query": {"type": "string", "description": "Search query"},'
+            ' "count": {"type": "number", "description": "Number of results (default 5)"}}'
+        ),
+        "code": textwrap.dedent("""\
+            from homeassistant.helpers.aiohttp_client import async_get_clientsession
+            from urllib.parse import quote_plus, urlparse, parse_qs, unquote
+            import re
+            query = params["query"]
+            count = int(params.get("count", 5))
+            session = async_get_clientsession(hass)
+            ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            async with session.get(
+                f"https://duckduckgo.com/?q={quote_plus(query)}",
+                headers={"User-Agent": ua},
+            ) as resp:
+                token_html = await resp.text()
+            m = re.search(r'vqd="([^"]+)"', token_html)
+            if not m:
+                m = re.search(r"vqd=([\\w-]+)", token_html)
+            if not m:
+                return {"results": [], "query": query, "error": "Search token unavailable"}
+            vqd = m.group(1)
+            headers = {
+                "User-Agent": ua,
+                "Referer": "https://html.duckduckgo.com/html",
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Fetch-User": "?1",
+            }
+            async with session.post(
+                "https://html.duckduckgo.com/html",
+                data={"q": query, "vqd": vqd},
+                headers=headers,
+            ) as resp:
+                html = await resp.text()
+            results = []
+            for m in re.finditer(
+                r'<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>',
+                html, re.DOTALL,
+            ):
+                if len(results) >= count:
+                    break
+                raw_url = m.group(1)
+                qs = parse_qs(urlparse(raw_url).query)
+                url = unquote(qs["uddg"][0]) if "uddg" in qs else raw_url
+                title = re.sub(r"<[^>]+>", "", m.group(2)).strip()
+                if title:
+                    results.append({"title": title, "url": url})
+            snippets = re.findall(
+                r'<a[^>]+class="result__snippet"[^>]*>(.*?)</a>', html, re.DOTALL
+            )
+            for i, snip in enumerate(snippets):
+                if i < len(results):
+                    results[i]["snippet"] = re.sub(r"<[^>]+>", "", snip).strip()[:300]
+            return {"results": results[:count], "query": query}"""),
+    },
 }
 
 

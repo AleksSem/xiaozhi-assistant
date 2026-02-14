@@ -9,12 +9,7 @@ CONF_DEVICE_ID = "device_id"
 CONF_CLIENT_ID = "client_id"
 CONF_PROTOCOL_VERSION = "protocol_version"
 CONF_RESPONSE_TIMEOUT = "response_timeout"
-CONF_CONNECTION_TYPE = "connection_type"
 CONF_MCP_URL = "mcp_url"
-
-# Connection types
-CONNECTION_TYPE_CLOUD = "cloud"
-CONNECTION_TYPE_SELF_HOSTED = "self_hosted"
 
 # Defaults
 CLOUD_SERVER_URL = "wss://api.tenclass.net/xiaozhi/v1/"

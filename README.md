@@ -31,7 +31,7 @@ HACS-compatible Home Assistant integration that makes [Xiaozhi AI](https://xiaoz
 - **Built-in STT & TTS** — Xiaozhi's own speech recognition and voice synthesis via a single WebSocket request, no need for separate Whisper/Piper
 - **Voice PE & Satellites** — full voice pipeline: speak → Xiaozhi STT → LLM → Xiaozhi TTS → hear response
 - **Smart Home Control** — Xiaozhi LLM calls HA services (lights, switches, climate, etc.) via built-in MCP tools
-- **Cloud & Self-hosted** — Xiaozhi Cloud with automatic OTA activation, or your own server
+- **Cloud-based** — Xiaozhi Cloud with automatic OTA activation
 - **OTA Activation** — no manual tokens: get a 6-digit code, enter on xiaozhi.me, done
 - **Multi-language** — supports any language that Xiaozhi LLM understands
 - **Persistent WebSocket** — single connection with automatic reconnection
@@ -66,8 +66,7 @@ In voice mode, one Xiaozhi request serves all three HA pipeline stages (STT → 
 
 - Home Assistant **2025.7** or newer
 - `ffmpeg` on PATH for voice mode (included in HA OS by default)
-- For **Cloud**: account on [xiaozhi.me](https://xiaozhi.me)
-- For **Self-hosted**: running Xiaozhi server with WebSocket endpoint
+- Account on [xiaozhi.me](https://xiaozhi.me)
 
 ## Installation
 
@@ -89,13 +88,12 @@ In voice mode, one Xiaozhi request serves all three HA pipeline stages (STT → 
 
 Go to **Settings** → **Devices & Services** → **Add Integration** → search **Xiaozhi AI Conversation**.
 
-### Cloud Setup (xiaozhi.me)
+### Setup
 
 **In Home Assistant:**
 
 1. **Settings** → **Devices & Services** → **Add Integration** → search **Xiaozhi AI Conversation**
-2. Select **Xiaozhi Cloud (xiaozhi.me)**
-3. A **6-digit activation code** appears (valid for 5 minutes)
+2. A **6-digit activation code** appears (valid for 5 minutes)
 
 **On xiaozhi.me:**
 
@@ -110,19 +108,11 @@ Go to **Settings** → **Devices & Services** → **Add Integration** → search
 
 That's it. No tokens, no URLs — everything is handled via OTA activation.
 
-> **MCP on a separate endpoint?** If your Xiaozhi Cloud agent uses a dedicated MCP WebSocket URL, set it after setup: **Settings** → **Devices & Services** → **Xiaozhi AI Conversation** → **Configure** → enter the MCP WebSocket URL.
-
-### Self-Hosted Setup
-
-1. Select **Self-hosted server**
-2. Enter your server's WebSocket URL (e.g., `ws://192.168.1.100:8000/xiaozhi/v1/`)
-3. Enter access token (optional, depends on your server config)
-4. Enter MCP WebSocket URL (optional) — if your server exposes MCP on a separate endpoint (e.g., `ws://192.168.1.100:8000/mcp/v1/`). Leave empty if MCP runs over the main WebSocket.
-5. Click **Submit** — the integration validates the connection
+> **Separate MCP endpoint?** If your Xiaozhi Cloud agent uses a dedicated MCP WebSocket URL (e.g. `wss://api.xiaozhi.me/mcp/?token=...`), set it after setup: **Settings** → **Devices & Services** → **Xiaozhi AI Conversation** → **Configure** → **General Settings** → enter the MCP WebSocket URL.
 
 ### Post-Setup Verification
 
-After either Cloud or Self-hosted setup:
+After setup:
 
 1. **Check status**: Settings → Devices & Services → Xiaozhi AI Conversation — should show **Connected**
 2. **Test text**: Open Assist → select **Xiaozhi AI** → type "Hello" → verify you get a response
@@ -522,7 +512,7 @@ custom_components/xiaozhi/
 ├── tts.py             # TTS entity (extends XiaozhiBaseEntity): cached audio or silence fallback
 ├── audio.py           # Audio: binary frames, PCM↔opus (FFmpeg), OGG/Opus stream build/parse
 ├── custom_tools.py    # Custom tools: TOOL_TEMPLATES, compile user code, register as MCP tools
-├── config_flow.py     # UI setup: Cloud (OTA), Self-hosted, options (settings, custom tools, templates)
+├── config_flow.py     # UI setup: OTA activation, options (settings, custom tools, templates)
 ├── ota.py             # OTA activation: register device, get WS credentials
 ├── mcp_handler.py     # MCP JSON-RPC 2.0: initialize, tools/list, tools/call
 ├── mcp_client.py      # MCP WebSocket client (extends BaseWebSocketClient) for separate endpoint
@@ -546,8 +536,7 @@ custom_components/xiaozhi/
 ## Troubleshooting
 
 ### "Unable to connect to the Xiaozhi server"
-- **Cloud**: check internet connection, try re-adding the integration
-- **Self-hosted**: verify server URL is correct, server is running, and reachable from HA
+- Check internet connection, try re-adding the integration
 
 ### Integration shows "Unavailable"
 - WebSocket connection lost — auto-reconnect is active, check logs

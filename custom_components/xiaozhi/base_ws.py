@@ -1,7 +1,7 @@
 """Base WebSocket client with reconnection logic.
 
-Extracts shared connect/reconnect/disconnect/listener patterns used by
-both XiaozhiWebSocketClient and MCPWebSocketClient.
+Provides shared connect/reconnect/disconnect/listener patterns used by
+XiaozhiWebSocketClient.
 """
 
 from __future__ import annotations

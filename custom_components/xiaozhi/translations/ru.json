@@ -2,30 +2,17 @@
   "config": {
     "step": {
       "user": {
-        "title": "Подключение Xiaozhi AI",
-        "description": "Выберите способ подключения к Xiaozhi AI.",
-        "data": {
-          "connection_type": "Тип подключения"
-        }
+        "title": "Xiaozhi AI",
+        "description": "Подключение к облачному сервису Xiaozhi AI."
       },
       "poll": {
         "title": "Активация устройства",
         "description": "Перейдите на [xiaozhi.me](https://xiaozhi.me), добавьте новое устройство и введите код активации:\n\n**{code}**\n\nНажмите Подтвердить после ввода кода."
-      },
-      "manual": {
-        "title": "Собственный сервер",
-        "description": "Введите параметры подключения к серверу Xiaozhi.",
-        "data": {
-          "server_url": "URL сервера",
-          "access_token": "Токен доступа (необязательно)",
-          "mcp_url": "MCP WebSocket URL (необязательно)"
-        }
       }
     },
     "error": {
       "cannot_connect": "Не удалось подключиться к серверу Xiaozhi. Проверьте URL и токен.",
       "invalid_auth": "Неверная аутентификация. Проверьте токен доступа.",
-      "invalid_url": "Неверный URL. Должен начинаться с ws:// или wss://.",
       "activation_timeout": "Время активации истекло. Убедитесь, что вы ввели код на xiaozhi.me, и попробуйте снова."
     },
     "abort": {
