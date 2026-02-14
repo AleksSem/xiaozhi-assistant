@@ -132,6 +132,7 @@ class PipelineResultCollector:
         self.ready = asyncio.Event()
         self.response_text: str | None = None
         self.audio_chunks: list[bytes] = []
+        self.failed: bool = False
         self.created_at = time.monotonic()
 
     def complete(self, response_text: str, audio_chunks: list[bytes]) -> None:
@@ -141,7 +142,8 @@ class PipelineResultCollector:
         self.ready.set()
 
     def fail(self) -> None:
-        """Mark collection as failed (no results)."""
+        """Mark collection as failed (cancelled/replaced)."""
+        self.failed = True
         self.ready.set()
 
     async def wait(self, timeout: float = 60) -> bool:

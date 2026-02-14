@@ -19,6 +19,7 @@ HACS-compatible Home Assistant integration that makes [Xiaozhi AI](https://xiaoz
 - [Configuration](#configuration)
 - [Usage](#usage)
 - [MCP Tools](#mcp-tools)
+- [Custom Tools](#custom-tools)
 - [Architecture](#architecture)
 - [Troubleshooting](#troubleshooting)
 - [Support](#support)
@@ -136,6 +137,7 @@ After setup: **Settings** → **Devices & Services** → **Xiaozhi AI Conversati
 |--------|---------|-------|-------------|
 | Response timeout | 30s | 5–120s | Max wait time for Xiaozhi response |
 | MCP WebSocket URL | *(empty)* | — | Separate MCP endpoint URL. Leave empty if MCP uses the main WebSocket connection |
+| Custom Tools | — | — | Add, edit, test, or delete custom Python tools. Includes ready-made templates |
 
 ## Usage
 
@@ -235,6 +237,278 @@ Execute a script or trigger an automation by entity_id. Supports `script.*` and 
 | `entity_id` | Yes | Entity ID of the script or automation |
 | `variables` | No | Variables to pass (scripts only) |
 
+## Custom Tools
+
+You can extend Xiaozhi AI with **any capability** by creating custom Python tools directly in the HA admin UI. Each tool becomes an MCP function that the AI can call — no files, no YAML, no SSH.
+
+### Templates
+
+The quickest way to add a tool — pick a ready-made template and customize it:
+
+1. **Configure** → **Custom Tools** → select **"Add from template"**
+2. Choose a template → form pre-fills with working code
+3. Customize name/description/code if needed → **Submit**
+
+**Available templates:**
+
+| Template | What it does |
+|----------|-------------|
+| Random Joke (English) | Fetches a random joke from official-joke-api |
+| Random Joke (Russian) | Fetches a random joke from rzhunemogu.ru |
+| Current Weather (Open-Meteo) | Current weather for any location, no API key |
+| Fetch Webpage | Fetches and cleans HTML from any URL |
+| RSS News Reader | Reads news from any RSS feed (default: delfi.lv) |
+
+### How It Works
+
+1. Go to **Settings** → **Devices & Services** → **Xiaozhi AI Conversation** → **Configure**
+2. Click **Custom Tools** → select **"Add custom tool"** or **"Add from template"**
+3. Fill in the form:
+   - **Name** — MCP tool name (e.g., `fetch_webpage`)
+   - **Description** — what the AI reads to decide when to use the tool
+   - **Parameters** (optional) — JSON schema for arguments the AI can pass
+   - **Python code** — the body of `async def execute(hass, params):`
+4. Optionally check **"Test without saving"** to run the code first and see the result
+5. Click **Submit** — the integration compiles the code and registers the tool
+6. The AI automatically sees the new tool and can call it
+
+### Example 1: Random Joke (zero config)
+
+Works immediately — just paste and submit. No API keys needed.
+
+**Name:** `tell_joke`
+
+**Description:** `Tell a random joke. Use this when the user asks for a joke or wants to have fun.`
+
+**Parameters:** *(leave empty)*
+
+**Python code:**
+```python
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+session = async_get_clientsession(hass)
+async with session.get("https://official-joke-api.appspot.com/random_joke") as resp:
+    joke = await resp.json()
+return {"setup": joke["setup"], "punchline": joke["punchline"]}
+```
+
+**Say to Xiaozhi:** "Tell me a joke"
+
+---
+
+### Example 2: Current Weather (zero config)
+
+Get real weather for any location. Uses Open-Meteo — free, no API key.
+
+**Name:** `get_weather`
+
+**Description:** `Get current weather (temperature, humidity, wind) for a location by coordinates. Use this when the user asks about weather.`
+
+**Parameters:**
+```json
+{
+  "latitude": {
+    "type": "number",
+    "description": "Latitude (e.g. 55.75 for Moscow, 48.85 for Paris)"
+  },
+  "longitude": {
+    "type": "number",
+    "description": "Longitude (e.g. 37.62 for Moscow, 2.35 for Paris)"
+  }
+}
+```
+
+**Python code:**
+```python
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+lat = params.get("latitude", 55.75)
+lon = params.get("longitude", 37.62)
+
+session = async_get_clientsession(hass)
+url = (
+    f"https://api.open-meteo.com/v1/forecast?"
+    f"latitude={lat}&longitude={lon}"
+    f"&current=temperature_2m,relative_humidity_2m,wind_speed_10m"
+    f"&timezone=auto"
+)
+async with session.get(url) as resp:
+    data = await resp.json()
+
+current = data["current"]
+return {
+    "temperature": f"{current['temperature_2m']}°C",
+    "humidity": f"{current['relative_humidity_2m']}%",
+    "wind": f"{current['wind_speed_10m']} km/h",
+}
+```
+
+**Say to Xiaozhi:** "What's the weather in Paris?" or "How's the weather?"
+
+---
+
+### Example 3: Fetch a Web Page
+
+Read content from any URL. The AI can browse the internet.
+
+**Name:** `fetch_webpage`
+
+**Description:** `Fetch and read text content from a URL. Use this when asked to check a website, read news, or get information from the internet.`
+
+**Parameters:**
+```json
+{
+  "url": {
+    "type": "string",
+    "description": "The URL to fetch"
+  }
+}
+```
+
+**Python code:**
+```python
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
+import aiohttp
+import re
+
+session = async_get_clientsession(hass)
+url = params.get("url", "")
+if not url:
+    return {"error": "URL is required"}
+
+try:
+    async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+        text = await resp.text()
+except Exception as e:
+    return {"error": str(e)}
+
+# Strip HTML tags for readability
+clean = re.sub(r'<script[^>]*>[\s\S]*?</script>', '', text)
+clean = re.sub(r'<style[^>]*>[\s\S]*?</style>', '', clean)
+clean = re.sub(r'<[^>]+>', ' ', clean)
+clean = re.sub(r'\s+', ' ', clean).strip()
+return {"content": clean[:4000]}
+```
+
+**Say to Xiaozhi:** "Go to bbc.com and tell me the latest news"
+
+### Example 4: Check Email (IMAP)
+
+Read latest email subjects and senders.
+
+**Name:** `check_email`
+
+**Description:** `Check the email inbox and return the latest messages with subjects and senders.`
+
+**Parameters:**
+```json
+{
+  "count": {
+    "type": "integer",
+    "description": "Number of emails to check (default: 5)"
+  }
+}
+```
+
+**Python code:**
+```python
+import imaplib
+import email as email_lib
+
+# ⚠️ Replace with your credentials
+IMAP_SERVER = "imap.gmail.com"
+IMAP_PORT = 993
+USERNAME = "your_email@gmail.com"
+PASSWORD = "your_app_password"  # Use App Password for Gmail
+
+count = params.get("count", 5)
+
+def _fetch():
+    conn = imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT)
+    conn.login(USERNAME, PASSWORD)
+    conn.select("INBOX")
+    _, data = conn.search(None, "ALL")
+    ids = data[0].split()[-count:]
+    results = []
+    for msg_id in reversed(ids):
+        _, msg_data = conn.fetch(msg_id, "(RFC822)")
+        msg = email_lib.message_from_bytes(msg_data[0][1])
+        results.append({
+            "from": str(msg["From"]),
+            "subject": str(msg["Subject"]),
+            "date": str(msg["Date"]),
+        })
+    conn.logout()
+    return results
+
+emails = await hass.async_add_executor_job(_fetch)
+return {"emails": emails}
+```
+
+> For Gmail, use an [App Password](https://support.google.com/accounts/answer/185833), not your regular password.
+
+**Say to Xiaozhi:** "Check my email" or "Do I have any new messages?"
+
+### Example 5: Check Telegram Messages
+
+Read recent messages from a Telegram chat via Bot API.
+
+**Name:** `check_telegram`
+
+**Description:** `Check recent messages in Telegram and return the latest ones.`
+
+**Parameters:**
+```json
+{
+  "count": {
+    "type": "integer",
+    "description": "Number of messages to return (default: 5)"
+  }
+}
+```
+
+**Python code:**
+```python
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
+import aiohttp
+
+# ⚠️ Replace with your bot token
+BOT_TOKEN = "123456:ABC-DEF..."
+
+count = params.get("count", 5)
+session = async_get_clientsession(hass)
+url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates?limit={count}"
+
+async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+    data = await resp.json()
+
+messages = []
+for update in data.get("result", []):
+    msg = update.get("message", {})
+    if msg:
+        messages.append({
+            "from": msg.get("from", {}).get("first_name", "Unknown"),
+            "text": msg.get("text", ""),
+            "date": msg.get("date", ""),
+        })
+
+return {"messages": messages}
+```
+
+**Say to Xiaozhi:** "Check if anyone wrote to me in Telegram"
+
+### Tips
+
+- **`hass`** — the HomeAssistant instance. Use `hass.services.async_call()`, `hass.states.get()`, etc.
+- **`params`** — dict of arguments passed by the AI, matching your Parameters JSON schema
+- **Blocking code** (imaplib, requests, file I/O) — wrap in `await hass.async_add_executor_job(func)`
+- **HTTP requests** — use `async_get_clientsession(hass)` (HA's shared aiohttp session)
+- **Return value** — return a `dict`, `list`, or `str`. Results are auto-truncated to 8000 chars
+- **Errors** — exceptions are caught and returned to the AI as `{"error": "..."}` (no crash)
+- **Editing tools** — Configure → Custom Tools → select tool name → modify → Submit
+- **Removing tools** — Configure → Custom Tools → select tool → check **Delete** → Submit
+- **After adding/removing** tools, the integration reloads automatically
+
 ## Architecture
 
 ```
@@ -247,7 +521,8 @@ custom_components/xiaozhi/
 ├── conversation.py    # Conversation entity (extends XiaozhiBaseEntity): voice cache or send_text
 ├── tts.py             # TTS entity (extends XiaozhiBaseEntity): cached audio or silence fallback
 ├── audio.py           # Audio: binary frames, PCM↔opus (FFmpeg), OGG/Opus stream build/parse
-├── config_flow.py     # UI setup: Cloud (OTA) or Self-hosted (manual)
+├── custom_tools.py    # Custom tools: TOOL_TEMPLATES, compile user code, register as MCP tools
+├── config_flow.py     # UI setup: Cloud (OTA), Self-hosted, options (settings, custom tools, templates)
 ├── ota.py             # OTA activation: register device, get WS credentials
 ├── mcp_handler.py     # MCP JSON-RPC 2.0: initialize, tools/list, tools/call
 ├── mcp_client.py      # MCP WebSocket client (extends BaseWebSocketClient) for separate endpoint
@@ -266,7 +541,7 @@ custom_components/xiaozhi/
 - **Single persistent connection** via `BaseWebSocketClient` base class with exponential backoff reconnection (5s → 60s)
 - **Pipeline caching** — one Xiaozhi request serves all three HA pipeline stages (STT → Conversation → TTS)
 - **MCP over same WebSocket** — tool calls wrapped in `{"type":"mcp","payload":{JSON-RPC 2.0}}`
-- **Voice mode skips chat_log** — avoids `InvalidStateError` race between HA's streaming and non-streaming response paths
+- **Voice mode adds to chat_log without delta_listener** — avoids `InvalidStateError` race between HA's streaming and non-streaming response paths
 
 ## Troubleshooting
 

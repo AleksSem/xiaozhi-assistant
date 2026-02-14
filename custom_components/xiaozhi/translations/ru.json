@@ -37,12 +37,64 @@
   "options": {
     "step": {
       "init": {
+        "menu_options": {
+          "settings": "Общие настройки",
+          "custom_tools": "Инструменты"
+        }
+      },
+      "settings": {
         "title": "Настройки Xiaozhi",
         "data": {
           "response_timeout": "Таймаут ответа (секунды)",
           "mcp_url": "MCP WebSocket URL (необязательно)"
         }
+      },
+      "custom_tools": {
+        "title": "Инструменты",
+        "description": "Выберите инструмент для редактирования или добавьте новый. Зарегистрировано инструментов: {tool_count}.",
+        "data": {
+          "selected": "Инструмент"
+        }
+      },
+      "add_from_template": {
+        "title": "Добавить из шаблона",
+        "description": "Выберите готовый шаблон инструмента. После добавления его можно настроить.",
+        "data": {
+          "template": "Шаблон"
+        }
+      },
+      "add_tool": {
+        "title": "Добавить инструмент",
+        "description": "Создайте Python-функцию, которую AI сможет вызывать.\n\n`hass` — экземпляр HomeAssistant (сервисы, состояния и т.д.)\n`params` — словарь аргументов от AI\nВерните dict, list или строку.\n\nСовет: Используйте `async_get_clientsession(hass)` для HTTP запросов.\n\n{test_result}",
+        "data": {
+          "tool_name": "Имя инструмента",
+          "tool_description": "Описание (AI читает это, чтобы решить когда вызывать инструмент)",
+          "tool_params": "JSON-схема параметров (необязательно)",
+          "tool_code": "Python код (тело async def execute)",
+          "test_only": "Тестировать без сохранения",
+          "test_params": "Тестовые параметры (JSON, необязательно)"
+        }
+      },
+      "edit_tool": {
+        "title": "Редактировать инструмент",
+        "description": "Измените инструмент ниже. Отметьте «Удалить» и нажмите Подтвердить для удаления.\n\n{test_result}",
+        "data": {
+          "tool_name": "Имя инструмента",
+          "tool_description": "Описание (AI читает это, чтобы решить когда вызывать инструмент)",
+          "tool_params": "JSON-схема параметров (необязательно)",
+          "tool_code": "Python код (тело async def execute)",
+          "test_only": "Тестировать без сохранения",
+          "test_params": "Тестовые параметры (JSON, необязательно)",
+          "delete": "Удалить этот инструмент"
+        }
       }
+    },
+    "error": {
+      "name_required": "Имя инструмента обязательно.",
+      "name_exists": "Инструмент с таким именем уже существует.",
+      "code_required": "Python код обязателен.",
+      "invalid_json": "Неверный формат JSON для параметров.",
+      "syntax_error": "Синтаксическая ошибка в Python коде."
     }
   }
 }

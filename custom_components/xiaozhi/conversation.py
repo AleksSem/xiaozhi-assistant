@@ -83,6 +83,9 @@ class XiaozhiConversationEntity(XiaozhiBaseEntity, ConversationEntity):
             if await collector.wait(timeout=PIPELINE_COLLECT_TIMEOUT):
                 response_text = collector.response_text
                 _LOGGER.debug("Collector ready: %s", response_text)
+            elif collector.failed:
+                response_text = "Request was replaced by a new voice command."
+                _LOGGER.debug("Collector cancelled for: %s", user_input.text)
             else:
                 response_text = "Sorry, the request timed out. Please try again."
                 _LOGGER.warning("Collector timeout for: %s", user_input.text)

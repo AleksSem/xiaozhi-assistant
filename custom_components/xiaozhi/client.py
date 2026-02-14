@@ -41,6 +41,8 @@ class XiaozhiWebSocketClient(BaseWebSocketClient):
         self._session_id: str | None = None
         self._pending: PendingRequest | None = None
         self._send_lock = asyncio.Lock()
+        self._tts_done = asyncio.Event()
+        self._tts_done.set()  # clean state, no drain needed initially
         self._mcp_handler: MCPHandler | None = None
         # Voice pipeline sessions (replaces global _stt_callback/_audio_callback)
         self._active_voice_session: VoicePipelineSession | None = None
@@ -71,6 +73,7 @@ class XiaozhiWebSocketClient(BaseWebSocketClient):
     async def _on_connected(self) -> None:
         """Perform hello handshake after connection."""
         self._state = ConnectionState.CONNECTED
+        self._tts_done.set()  # clean state after reconnect
         await self._hello_handshake()
 
     def _on_disconnected(self) -> None:
@@ -100,7 +103,7 @@ class XiaozhiWebSocketClient(BaseWebSocketClient):
         """
         old = self._active_voice_session
         if old is not None:
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "Overwriting active voice session %s with %s",
                 old.session_id, session.session_id,
             )
@@ -185,11 +188,26 @@ class XiaozhiWebSocketClient(BaseWebSocketClient):
 
         Returns the concatenated TTS response text.
         Raises asyncio.TimeoutError if response takes too long.
+
+        Requests are serialized via _send_lock. If a previous request timed
+        out, the server's leftover TTS stream is drained before sending.
         """
         if not self.is_connected:
             raise ConnectionError("Not connected to Xiaozhi server")
 
         async with self._send_lock:
+            # Drain any leftover TTS from a previous timed-out request
+            if not self._tts_done.is_set():
+                _LOGGER.debug("Draining stale TTS before sending: %s", text)
+                try:
+                    await asyncio.wait_for(self._tts_done.wait(), timeout=5)
+                except asyncio.TimeoutError:
+                    _LOGGER.warning(
+                        "Drain timeout — server may not have finished previous request"
+                    )
+
+            self._tts_done.clear()
+
             loop = asyncio.get_running_loop()
             future: asyncio.Future[str] = loop.create_future()
             self._pending = PendingRequest(
@@ -216,6 +234,14 @@ class XiaozhiWebSocketClient(BaseWebSocketClient):
                 )
             except asyncio.TimeoutError:
                 self._pending = None
+                # Wait for server to finish its TTS stream before next request
+                _LOGGER.debug("Timeout — waiting for server to finish TTS")
+                try:
+                    await asyncio.wait_for(self._tts_done.wait(), timeout=5)
+                except asyncio.TimeoutError:
+                    _LOGGER.warning(
+                        "Server did not finish TTS within drain timeout"
+                    )
                 raise
             finally:
                 if self._pending and self._pending.future is future:
@@ -269,6 +295,7 @@ class XiaozhiWebSocketClient(BaseWebSocketClient):
             _LOGGER.debug("TTS chunk: %s", text)
         elif state == TTS_STATE_STOP:
             _LOGGER.debug("TTS stream stopped")
+            self._tts_done.set()
             if session is not None and not session.tts_future.done():
                 result = " ".join(session.response_chunks)
                 session.tts_future.set_result(result)

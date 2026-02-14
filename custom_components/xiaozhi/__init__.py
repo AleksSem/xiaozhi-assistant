@@ -22,6 +22,7 @@ from .const import (
     DEFAULT_RESPONSE_TIMEOUT,
     DOMAIN,
 )
+from .custom_tools import register_custom_tools
 from .mcp_client import MCPWebSocketClient
 from .mcp_handler import MCPHandler
 from .models import PipelineCacheManager, XiaozhiConfig
@@ -53,6 +54,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     mcp_handler = MCPHandler(hass)
     cache = PipelineCacheManager()
     client.set_mcp_handler(mcp_handler)
+
+    # Register user-defined custom tools from options
+    custom_tools_cfg = entry.options.get("custom_tools", [])
+    if custom_tools_cfg:
+        count = register_custom_tools(hass, mcp_handler, custom_tools_cfg)
+        _LOGGER.info("Loaded %d custom tool(s)", count)
 
     try:
         await client.connect()

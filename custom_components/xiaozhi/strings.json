@@ -37,12 +37,64 @@
   "options": {
     "step": {
       "init": {
-        "title": "Xiaozhi Options",
+        "menu_options": {
+          "settings": "General Settings",
+          "custom_tools": "Custom Tools"
+        }
+      },
+      "settings": {
+        "title": "Xiaozhi Settings",
         "data": {
           "response_timeout": "Response timeout (seconds)",
           "mcp_url": "MCP WebSocket URL (optional)"
         }
+      },
+      "custom_tools": {
+        "title": "Custom Tools",
+        "description": "Select a tool to edit, or add a new one. {tool_count} tool(s) registered.",
+        "data": {
+          "selected": "Tool"
+        }
+      },
+      "add_from_template": {
+        "title": "Add from Template",
+        "description": "Select a ready-made tool template. You can customize it after adding.",
+        "data": {
+          "template": "Template"
+        }
+      },
+      "add_tool": {
+        "title": "Add Custom Tool",
+        "description": "Create a Python function that the AI can call.\n\n`hass` — HomeAssistant instance (services, states, etc.)\n`params` — dict of arguments from the AI\nReturn a dict, list, or string.\n\nTip: Use `async_get_clientsession(hass)` for HTTP requests.\n\n{test_result}",
+        "data": {
+          "tool_name": "Tool name",
+          "tool_description": "Description (what the AI sees to decide when to call this tool)",
+          "tool_params": "Parameters JSON schema (optional)",
+          "tool_code": "Python code (body of async def execute)",
+          "test_only": "Test without saving",
+          "test_params": "Test parameters (JSON, optional)"
+        }
+      },
+      "edit_tool": {
+        "title": "Edit Custom Tool",
+        "description": "Modify the tool below. Toggle \"Delete\" and submit to remove.\n\n{test_result}",
+        "data": {
+          "tool_name": "Tool name",
+          "tool_description": "Description (what the AI sees to decide when to call this tool)",
+          "tool_params": "Parameters JSON schema (optional)",
+          "tool_code": "Python code (body of async def execute)",
+          "test_only": "Test without saving",
+          "test_params": "Test parameters (JSON, optional)",
+          "delete": "Delete this tool"
+        }
       }
+    },
+    "error": {
+      "name_required": "Tool name is required.",
+      "name_exists": "A tool with this name already exists.",
+      "code_required": "Python code is required.",
+      "invalid_json": "Invalid JSON format for parameters.",
+      "syntax_error": "Python syntax error in the code."
     }
   }
 }

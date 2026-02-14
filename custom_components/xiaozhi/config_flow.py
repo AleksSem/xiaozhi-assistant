@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import copy
+import json
 import logging
+import textwrap
+import traceback
 import uuid
 from typing import Any
 from urllib.parse import urlparse
@@ -18,6 +22,11 @@ from homeassistant.config_entries import (
 )
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.selector import (
+    BooleanSelector,
+    TextSelector,
+    TextSelectorConfig,
+)
 
 from .client import XiaozhiWebSocketClient
 from .const import (
@@ -37,6 +46,7 @@ from .const import (
     MAX_RESPONSE_TIMEOUT,
     MIN_RESPONSE_TIMEOUT,
 )
+from .custom_tools import TOOL_TEMPLATES, generate_tool_id
 from .models import XiaozhiConfig
 from .ota import OTAError, XiaozhiOTAClient
 
@@ -273,12 +283,34 @@ class XiaozhiConfigFlow(ConfigFlow, domain=DOMAIN):
 class XiaozhiOptionsFlow(OptionsFlow):
     """Handle options for Xiaozhi AI Conversation."""
 
+    def __init__(self) -> None:
+        """Initialize the options flow."""
+        self._custom_tools: list[dict[str, Any]] = []
+        self._editing_tool_id: str | None = None
+        self._template_data: dict[str, str] | None = None
+
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Manage the options."""
+        """Show main menu."""
+        self._custom_tools = copy.deepcopy(
+            self.config_entry.options.get("custom_tools", [])
+        )
+        return self.async_show_menu(
+            step_id="init", menu_options=["settings", "custom_tools"]
+        )
+
+    async def async_step_settings(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """General settings (timeout, MCP URL)."""
         if user_input is not None:
-            return self.async_create_entry(data=user_input)
+            return self.async_create_entry(
+                data={
+                    **user_input,
+                    "custom_tools": self._custom_tools,
+                }
+            )
 
         current_timeout = self.config_entry.options.get(
             CONF_RESPONSE_TIMEOUT, DEFAULT_RESPONSE_TIMEOUT
@@ -289,7 +321,7 @@ class XiaozhiOptionsFlow(OptionsFlow):
         )
 
         return self.async_show_form(
-            step_id="init",
+            step_id="settings",
             data_schema=vol.Schema(
                 {
                     vol.Required(
@@ -309,3 +341,325 @@ class XiaozhiOptionsFlow(OptionsFlow):
                 }
             ),
         )
+
+    async def async_step_custom_tools(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Custom tools list — select to edit, add new, or add from template."""
+        if user_input is not None:
+            selected = user_input["selected"]
+            if selected == "__add__":
+                return await self.async_step_add_tool()
+            if selected == "__template__":
+                return await self.async_step_add_from_template()
+            self._editing_tool_id = selected
+            return await self.async_step_edit_tool()
+
+        tool_options: dict[str, str] = {
+            "__add__": "➕ Add custom tool",
+            "__template__": "📋 Add from template",
+        }
+        for tool in self._custom_tools:
+            tool_options[tool["id"]] = tool["name"]
+
+        return self.async_show_form(
+            step_id="custom_tools",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("selected"): vol.In(tool_options),
+                }
+            ),
+            description_placeholders={
+                "tool_count": str(len(self._custom_tools)),
+            },
+        )
+
+    async def async_step_add_from_template(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Select a template to pre-fill the add tool form."""
+        if user_input is not None:
+            template_key = user_input["template"]
+            self._template_data = TOOL_TEMPLATES[template_key]
+            return await self.async_step_add_tool()
+
+        template_options = {
+            key: tmpl["label"] for key, tmpl in TOOL_TEMPLATES.items()
+        }
+
+        return self.async_show_form(
+            step_id="add_from_template",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("template"): vol.In(template_options),
+                }
+            ),
+        )
+
+    async def _test_tool_code(
+        self, code: str, test_params_raw: str
+    ) -> str:
+        """Compile and execute tool code, return formatted result string."""
+        error_hint = "\n\nFix the code below and try again."
+        try:
+            params = json.loads(test_params_raw) if test_params_raw else {}
+        except json.JSONDecodeError:
+            return f"**Error:**\n```\nInvalid test parameters JSON\n```{error_hint}"
+
+        try:
+            indented = textwrap.indent(code, "    ")
+            wrapped = f"async def _test_fn(hass, params):\n{indented}\n"
+            namespace: dict[str, Any] = {}
+            exec(compile(wrapped, "<test>", "exec"), namespace)  # noqa: S102
+            fn = namespace["_test_fn"]
+        except SyntaxError:
+            return f"**Error:**\n```\n{traceback.format_exc()}\n```{error_hint}"
+
+        try:
+            result = await asyncio.wait_for(
+                fn(self.hass, params), timeout=10
+            )
+            formatted = json.dumps(result, default=str, ensure_ascii=False, indent=2)
+        except asyncio.TimeoutError:
+            formatted = "Execution timed out (10s limit)"
+            return f"**Error:**\n```\n{formatted}\n```{error_hint}"
+        except Exception:  # noqa: BLE001
+            return f"**Error:**\n```\n{traceback.format_exc()}\n```{error_hint}"
+
+        if len(formatted) > 2000:
+            formatted = formatted[:2000] + "\n... (truncated)"
+        ok_hint = "\n\nSubmit again to save, or modify the code below."
+        return f"**Result:**\n```\n{formatted}\n```{ok_hint}"
+
+    def _build_tool_schema(
+        self,
+        name: str = "",
+        description: str = "",
+        params_json: str = "",
+        code: str = "",
+        test_params: str = "",
+        *,
+        include_delete: bool = False,
+    ) -> vol.Schema:
+        """Build the add/edit tool form schema with given defaults."""
+        schema_dict: dict[vol.Marker, Any] = {
+            vol.Required("tool_name", default=name): str,
+            vol.Required("tool_description", default=description): TextSelector(
+                TextSelectorConfig(multiline=True)
+            ),
+            vol.Optional("tool_params", default=params_json): TextSelector(
+                TextSelectorConfig(multiline=True)
+            ),
+            vol.Required("tool_code", default=code): TextSelector(
+                TextSelectorConfig(multiline=True)
+            ),
+            vol.Optional("test_only", default=False): BooleanSelector(),
+            vol.Optional("test_params", default=test_params): TextSelector(
+                TextSelectorConfig(multiline=True)
+            ),
+        }
+        if include_delete:
+            schema_dict[vol.Optional("delete", default=False)] = BooleanSelector()
+        return vol.Schema(schema_dict)
+
+    async def async_step_add_tool(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Add a custom tool."""
+        errors: dict[str, str] = {}
+        test_result = ""
+
+        # Consume template prefill on first entry
+        prefill = self._template_data
+        if prefill:
+            self._template_data = None
+
+        if user_input is not None:
+            name = user_input["tool_name"].strip()
+            description = user_input["tool_description"].strip()
+            code = user_input["tool_code"].strip()
+            params_json = user_input.get("tool_params", "").strip()
+            is_test = user_input.get("test_only", False)
+            test_params_raw = user_input.get("test_params", "").strip()
+
+            if not name:
+                errors["tool_name"] = "name_required"
+            elif any(t["name"] == name for t in self._custom_tools):
+                errors["tool_name"] = "name_exists"
+
+            if not code:
+                errors["tool_code"] = "code_required"
+
+            if params_json:
+                try:
+                    json.loads(params_json)
+                except json.JSONDecodeError:
+                    errors["tool_params"] = "invalid_json"
+
+            if not errors:
+                try:
+                    indented = textwrap.indent(code, "    ")
+                    wrapped = f"async def _t(hass, params):\n{indented}\n"
+                    exec(compile(wrapped, "<validate>", "exec"), {})  # noqa: S102
+                except SyntaxError:
+                    errors["tool_code"] = "syntax_error"
+
+            if is_test and not errors:
+                test_result = await self._test_tool_code(code, test_params_raw)
+                return self.async_show_form(
+                    step_id="add_tool",
+                    data_schema=self._build_tool_schema(
+                        name, description, params_json, code, test_params_raw,
+                    ),
+                    errors=errors,
+                    description_placeholders={"test_result": test_result},
+                )
+
+            if not errors:
+                new_tool: dict[str, Any] = {
+                    "id": generate_tool_id(),
+                    "name": name,
+                    "description": description,
+                    "params_json": params_json or "{}",
+                    "code": code,
+                }
+                self._custom_tools.append(new_tool)
+                return self.async_create_entry(
+                    data={
+                        **self._get_current_settings(),
+                        "custom_tools": self._custom_tools,
+                    }
+                )
+
+        # Pre-fill from template or show blank form
+        if prefill:
+            schema = self._build_tool_schema(
+                prefill["name"],
+                prefill["description"],
+                prefill["params_json"],
+                prefill["code"],
+            )
+        else:
+            schema = self._build_tool_schema()
+
+        return self.async_show_form(
+            step_id="add_tool",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders={"test_result": test_result},
+        )
+
+    async def async_step_edit_tool(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Edit or delete an existing custom tool."""
+        tool = next(
+            (t for t in self._custom_tools if t["id"] == self._editing_tool_id),
+            None,
+        )
+        if tool is None:
+            return self.async_create_entry(
+                data={
+                    **self._get_current_settings(),
+                    "custom_tools": self._custom_tools,
+                }
+            )
+
+        errors: dict[str, str] = {}
+        test_result = ""
+
+        if user_input is not None:
+            # Delete
+            if user_input.get("delete"):
+                self._custom_tools = [
+                    t
+                    for t in self._custom_tools
+                    if t["id"] != self._editing_tool_id
+                ]
+                return self.async_create_entry(
+                    data={
+                        **self._get_current_settings(),
+                        "custom_tools": self._custom_tools,
+                    }
+                )
+
+            # Edit — validate
+            name = user_input["tool_name"].strip()
+            description = user_input["tool_description"].strip()
+            code = user_input["tool_code"].strip()
+            params_json = user_input.get("tool_params", "").strip()
+            is_test = user_input.get("test_only", False)
+            test_params_raw = user_input.get("test_params", "").strip()
+
+            if not name:
+                errors["tool_name"] = "name_required"
+            elif name != tool["name"] and any(
+                t["name"] == name for t in self._custom_tools
+            ):
+                errors["tool_name"] = "name_exists"
+
+            if not code:
+                errors["tool_code"] = "code_required"
+
+            if params_json:
+                try:
+                    json.loads(params_json)
+                except json.JSONDecodeError:
+                    errors["tool_params"] = "invalid_json"
+
+            if not errors:
+                try:
+                    indented = textwrap.indent(code, "    ")
+                    wrapped = f"async def _t(hass, params):\n{indented}\n"
+                    exec(compile(wrapped, "<validate>", "exec"), {})  # noqa: S102
+                except SyntaxError:
+                    errors["tool_code"] = "syntax_error"
+
+            if is_test and not errors:
+                test_result = await self._test_tool_code(code, test_params_raw)
+                return self.async_show_form(
+                    step_id="edit_tool",
+                    data_schema=self._build_tool_schema(
+                        name, description, params_json, code, test_params_raw,
+                        include_delete=True,
+                    ),
+                    errors=errors,
+                    description_placeholders={"test_result": test_result},
+                )
+
+            if not errors:
+                tool["name"] = name
+                tool["description"] = description
+                tool["params_json"] = params_json or "{}"
+                tool["code"] = code
+                return self.async_create_entry(
+                    data={
+                        **self._get_current_settings(),
+                        "custom_tools": self._custom_tools,
+                    }
+                )
+
+        return self.async_show_form(
+            step_id="edit_tool",
+            data_schema=self._build_tool_schema(
+                tool["name"],
+                tool["description"],
+                tool.get("params_json", "{}"),
+                tool["code"],
+                include_delete=True,
+            ),
+            errors=errors,
+            description_placeholders={"test_result": test_result},
+        )
+
+    def _get_current_settings(self) -> dict[str, Any]:
+        """Get current non-tool settings."""
+        return {
+            CONF_RESPONSE_TIMEOUT: self.config_entry.options.get(
+                CONF_RESPONSE_TIMEOUT, DEFAULT_RESPONSE_TIMEOUT
+            ),
+            CONF_MCP_URL: self.config_entry.options.get(
+                CONF_MCP_URL,
+                self.config_entry.data.get(CONF_MCP_URL, ""),
+            ),
+        }
