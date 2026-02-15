@@ -183,10 +183,12 @@ class XiaozhiWebSocketClient(BaseWebSocketClient):
         self._state = ConnectionState.AUTHENTICATED
         _LOGGER.debug("Authenticated, session_id=%s", self._session_id)
 
-    async def send_text(self, text: str, language: str | None = None) -> str:
+    async def send_text(
+        self, text: str, language: str | None = None
+    ) -> tuple[str, list[bytes]]:
         """Send text to Xiaozhi server and wait for the response.
 
-        Returns the concatenated TTS response text.
+        Returns (response_text, audio_chunks).
         Raises asyncio.TimeoutError if response takes too long.
 
         Requests are serialized via _send_lock. If a previous request timed
@@ -229,9 +231,17 @@ class XiaozhiWebSocketClient(BaseWebSocketClient):
             _LOGGER.debug("Sent text: %s", text)
 
             try:
-                return await asyncio.wait_for(
+                result_text = await asyncio.wait_for(
                     future, timeout=self._config.response_timeout
                 )
+                # Yield to event loop — let listener process any trailing binary frames
+                await asyncio.sleep(0)
+                audio = list(self._pending.audio_chunks) if self._pending else []
+                _LOGGER.debug(
+                    "send_text result: text=%.50s..., audio_chunks=%d",
+                    result_text, len(audio),
+                )
+                return result_text, audio
             except asyncio.TimeoutError:
                 self._pending = None
                 # Wait for server to finish its TTS stream before next request

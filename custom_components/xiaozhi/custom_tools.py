@@ -96,6 +96,8 @@ TOOL_TEMPLATES: dict[str, dict[str, str]] = {
             from homeassistant.helpers.aiohttp_client import async_get_clientsession
             import re
             url = params["url"]
+            if not url.startswith(("http://", "https://")):
+                url = "https://" + url
             session = async_get_clientsession(hass)
             async with session.get(url) as resp:
                 html = await resp.text()
@@ -121,6 +123,8 @@ TOOL_TEMPLATES: dict[str, dict[str, str]] = {
             import xml.etree.ElementTree as ET
             import re
             url = params.get("url", "https://rus.delfi.lv/rss/index.xml")
+            if url and not url.startswith(("http://", "https://")):
+                url = "https://" + url
             count = int(params.get("count", 5))
             session = async_get_clientsession(hass)
             async with session.get(url) as resp:

@@ -99,7 +99,16 @@ class XiaozhiConversationEntity(XiaozhiBaseEntity, ConversationEntity):
             else:
                 # Text mode: normal send_text()
                 try:
-                    response_text = await self._client.send_text(user_input.text, language=user_input.language)
+                    response_text, audio_chunks = await self._client.send_text(
+                        user_input.text, language=user_input.language
+                    )
+                    if audio_chunks:
+                        await self._cache.store(user_input.text, response_text, audio_chunks)
+                        _LOGGER.debug("Cached %d audio chunks for TTS", len(audio_chunks))
+                    else:
+                        _LOGGER.debug(
+                            "No audio chunks from send_text (server may not send audio for text mode)"
+                        )
                 except asyncio.TimeoutError:
                     response_text = "Sorry, the request timed out. Please try again."
                     _LOGGER.warning("Xiaozhi response timeout for: %s", user_input.text)

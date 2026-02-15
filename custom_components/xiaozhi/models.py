@@ -236,13 +236,14 @@ class PipelineCacheManager:
             self._store_locked(stt_text, response_text, audio_chunks)
 
     async def get_by_input(self, stt_text: str) -> PipelineCache | None:
-        """Look up cached results by STT input text."""
+        """Look up cached results by STT input text (non-destructive).
+
+        TTS is the last pipeline stage and pops from cache on read.
+        TTL cleanup handles orphaned entries.
+        """
         async with self._lock:
             self._cleanup_if_needed()
-            entry = self._cache.pop(stt_text, None)
-            if entry:
-                self._response_index.pop(entry.response_text, None)
-            return entry
+            return self._cache.get(stt_text, None)
 
     async def get_audio_by_response(self, response_text: str) -> list[bytes] | None:
         """Look up cached audio by LLM response text (for TTS entity)."""

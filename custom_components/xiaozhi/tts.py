@@ -76,7 +76,12 @@ class XiaozhiTTSEntity(XiaozhiBaseEntity, TextToSpeechEntity):
             if not await collector.wait(timeout=PIPELINE_COLLECT_TIMEOUT):
                 _LOGGER.warning("TTS collector timeout: %.50s...", message)
                 return ("wav", generate_silence_wav())
+        else:
+            _LOGGER.debug(
+                "TTS no collector (fast-server path): %.50s...", message
+            )
 
+        _LOGGER.debug("TTS looking up cache for response: %.80s...", message)
         audio_chunks = await self._cache.get_audio_by_response(message)
         if audio_chunks:
             _LOGGER.debug("Serving cached TTS audio (%d chunks)", len(audio_chunks))
