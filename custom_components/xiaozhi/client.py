@@ -43,6 +43,7 @@ class XiaozhiWebSocketClient(BaseWebSocketClient):
         self._send_lock = asyncio.Lock()
         self._tts_done = asyncio.Event()
         self._tts_done.set()  # clean state, no drain needed initially
+        self._authenticated_event = asyncio.Event()
         self._mcp_handler: MCPHandler | None = None
         # Voice pipeline sessions (replaces global _stt_callback/_audio_callback)
         self._active_voice_session: VoicePipelineSession | None = None
@@ -79,6 +80,7 @@ class XiaozhiWebSocketClient(BaseWebSocketClient):
     def _on_disconnected(self) -> None:
         """Handle disconnection: fail pending requests."""
         self._state = ConnectionState.DISCONNECTED
+        self._authenticated_event.clear()
         self._fail_pending("Connection lost")
 
     async def _connect_once(self) -> None:
@@ -181,6 +183,7 @@ class XiaozhiWebSocketClient(BaseWebSocketClient):
         if not self._session_id:
             _LOGGER.warning("Server hello without session_id")
         self._state = ConnectionState.AUTHENTICATED
+        self._authenticated_event.set()
         _LOGGER.debug("Authenticated, session_id=%s", self._session_id)
 
     async def send_text(
@@ -195,7 +198,13 @@ class XiaozhiWebSocketClient(BaseWebSocketClient):
         out, the server's leftover TTS stream is drained before sending.
         """
         if not self.is_connected:
-            raise ConnectionError("Not connected to Xiaozhi server")
+            _LOGGER.debug("Not connected, waiting for reconnection...")
+            try:
+                await asyncio.wait_for(
+                    self._authenticated_event.wait(), timeout=15
+                )
+            except asyncio.TimeoutError:
+                raise ConnectionError("Not connected to Xiaozhi server")
 
         async with self._send_lock:
             # Drain any leftover TTS from a previous timed-out request

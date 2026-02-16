@@ -96,6 +96,26 @@ async def _tool_call_service(
     return {"success": True}
 
 
+_EXCLUDED_ATTRS = frozenset({
+    "supported_features",
+    "supported_color_modes",
+    "color_mode",
+    "entity_picture",
+    "entity_picture_local",
+    "icon",
+    "attribution",
+    "assumed_state",
+    "effect_list",
+    "preset_modes",
+    "hvac_modes",
+    "fan_modes",
+    "swing_modes",
+    "source_list",
+    "sound_mode_list",
+    "options",
+})
+
+
 async def _tool_get_states(
     hass: HomeAssistant, params: dict[str, Any]
 ) -> dict[str, Any]:
@@ -111,9 +131,15 @@ async def _tool_get_states(
     for entity_id in entity_ids:
         state = hass.states.get(entity_id)
         if state:
+            attrs = {
+                k: v
+                for k, v in state.attributes.items()
+                if k not in _EXCLUDED_ATTRS
+                and not isinstance(v, (list, set))
+            }
             states[entity_id] = {
                 "state": state.state,
-                "attributes": dict(state.attributes),
+                "attributes": attrs,
                 "last_changed": state.last_changed.isoformat(),
             }
         else:
@@ -127,6 +153,7 @@ async def _tool_list_entities(
 ) -> dict[str, Any]:
     """List available entities, optionally filtered by domain."""
     domain_filter = params.get("domain")
+    limit = min(int(params.get("limit", 200)), 500)
 
     entities = []
     for state in hass.states.async_all():
@@ -140,7 +167,19 @@ async def _tool_list_entities(
             }
         )
 
-    return {"entities": entities}
+    # Sort: available first, then alphabetically by entity_id
+    entities.sort(key=lambda e: (e["state"] == "unavailable", e["entity_id"]))
+
+    total_count = len(entities)
+    truncated = total_count > limit
+    entities = entities[:limit]
+
+    result: dict[str, Any] = {"entities": entities, "total": total_count}
+    if truncated:
+        result["truncated"] = True
+        result["hint"] = "Use 'domain' filter to narrow results"
+
+    return result
 
 
 async def _tool_get_history(
@@ -290,6 +329,129 @@ async def _tool_execute_action(
     return {"success": True}
 
 
+_SUMMARY_SENSOR_CLASSES = frozenset({
+    "temperature", "humidity", "illuminance", "pm25", "pm10",
+    "co2", "battery", "power", "energy", "pressure",
+})
+
+_SUMMARY_DEVICE_DOMAINS = frozenset({
+    "light", "switch", "fan", "cover", "climate",
+    "media_player", "lock", "vacuum",
+})
+
+_ON_STATES = frozenset({
+    "on", "open", "unlocked", "playing",
+    "heat", "cool", "auto", "cleaning",
+})
+
+
+async def _tool_get_home_summary(
+    hass: HomeAssistant, params: dict[str, Any]
+) -> dict[str, Any]:
+    """Get a compact home summary: areas, sensors, device counts, weather."""
+    from homeassistant.helpers import area_registry as ar
+    from homeassistant.helpers import device_registry as dr
+    from homeassistant.helpers import entity_registry as er
+
+    area_filter = params.get("area_id")
+
+    area_reg = ar.async_get(hass)
+    dev_reg = dr.async_get(hass)
+    ent_reg = er.async_get(hass)
+
+    # Build entity_id -> area_id mapping (entity area overrides device area)
+    entity_area: dict[str, str] = {}
+    for entry in ent_reg.entities.values():
+        if entry.area_id:
+            entity_area[entry.entity_id] = entry.area_id
+        elif entry.device_id:
+            device = dev_reg.async_get(entry.device_id)
+            if device and device.area_id:
+                entity_area[entry.entity_id] = device.area_id
+
+    # Prepare area buckets
+    areas_data: dict[str, dict[str, Any]] = {}
+    for area in area_reg.async_list_areas():
+        if area_filter and area.id != area_filter:
+            continue
+        areas_data[area.id] = {
+            "name": area.name,
+            "sensors": [],
+            "devices": {},
+        }
+
+    # Single pass over all states
+    all_states = hass.states.async_all()
+    for state in all_states:
+        area_id = entity_area.get(state.entity_id)
+        if not area_id or area_id not in areas_data:
+            continue
+
+        ad = areas_data[area_id]
+        domain = state.entity_id.split(".")[0]
+        attrs = state.attributes
+
+        # Collect key sensor readings
+        if domain in ("sensor", "binary_sensor"):
+            dc = attrs.get("device_class", "")
+            if dc in _SUMMARY_SENSOR_CLASSES and state.state not in (
+                "unknown",
+                "unavailable",
+            ):
+                try:
+                    val = round(float(state.state), 1)
+                    unit = attrs.get("unit_of_measurement", "")
+                    name = attrs.get("friendly_name", state.entity_id)
+                    ad["sensors"].append(f"{name}: {val} {unit}".strip())
+                except (ValueError, TypeError):
+                    pass
+
+        # Count device statuses
+        if domain in _SUMMARY_DEVICE_DOMAINS:
+            if domain not in ad["devices"]:
+                ad["devices"][domain] = {"on": 0, "off": 0, "unavailable": 0}
+            counts = ad["devices"][domain]
+            if state.state == "unavailable":
+                counts["unavailable"] += 1
+            elif state.state in _ON_STATES:
+                counts["on"] += 1
+            else:
+                counts["off"] += 1
+
+    # Build compact result — skip empty areas
+    result_areas = []
+    for ad in areas_data.values():
+        if not ad["sensors"] and not ad["devices"]:
+            continue
+        area_entry: dict[str, Any] = {"name": ad["name"]}
+        if ad["sensors"]:
+            area_entry["sensors"] = ad["sensors"]
+        if ad["devices"]:
+            area_entry["devices"] = ad["devices"]
+        result_areas.append(area_entry)
+
+    result: dict[str, Any] = {"areas": result_areas}
+
+    # Weather (first available)
+    for state in all_states:
+        if state.entity_id.startswith("weather.") and state.state != "unavailable":
+            result["weather"] = {
+                "condition": state.state,
+                "temperature": state.attributes.get("temperature"),
+                "humidity": state.attributes.get("humidity"),
+                "unit": state.attributes.get("temperature_unit", "°C"),
+            }
+            break
+
+    # Overall stats
+    total = len(all_states)
+    unavailable = sum(1 for s in all_states if s.state == "unavailable")
+    result["total_entities"] = total
+    result["unavailable_count"] = unavailable
+
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Tool definitions (constants)
 # ---------------------------------------------------------------------------
@@ -344,13 +506,20 @@ TOOL_GET_STATES = MCPTool(
 
 TOOL_LIST_ENTITIES = MCPTool(
     name="homeassistant_list_entities",
-    description="List available Home Assistant entities, optionally filtered by domain",
+    description=(
+        "List available Home Assistant entities, optionally filtered by domain. "
+        "Returns up to 200 entities by default (available entities first)."
+    ),
     input_schema={
         "type": "object",
         "properties": {
             "domain": {
                 "type": "string",
                 "description": "Optional domain filter (e.g., light, switch)",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Max entities to return (default: 200, max: 500)",
             },
         },
     },
@@ -396,6 +565,26 @@ TOOL_GET_AREAS = MCPTool(
         },
     },
     handler=_tool_get_areas,
+)
+
+TOOL_GET_HOME_SUMMARY = MCPTool(
+    name="homeassistant_get_home_summary",
+    description=(
+        "Get a concise summary of the entire home: areas with sensor readings "
+        "(temperature, humidity, etc.), device status counts per area, current "
+        "weather, and overall availability stats. Use this FIRST when the user "
+        "asks about the home status."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "area_id": {
+                "type": "string",
+                "description": "Optional area ID to filter (omit for full home summary)",
+            },
+        },
+    },
+    handler=_tool_get_home_summary,
 )
 
 TOOL_FIRE_EVENT = MCPTool(
@@ -445,6 +634,7 @@ DEFAULT_TOOLS: list[MCPTool] = [
     TOOL_CALL_SERVICE,
     TOOL_GET_STATES,
     TOOL_LIST_ENTITIES,
+    TOOL_GET_HOME_SUMMARY,
     TOOL_GET_HISTORY,
     TOOL_GET_AREAS,
     TOOL_FIRE_EVENT,
