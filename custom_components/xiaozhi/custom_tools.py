@@ -111,21 +111,30 @@ TOOL_TEMPLATES: dict[str, dict[str, str]] = {
         "label": "RSS News Reader",
         "name": "read_news",
         "description": (
-            "Read latest news from an RSS feed."
-            " Default: rus.delfi.lv. Returns titles, links, and short descriptions."
+            "Read news from RSS feed. Default: rus.delfi.lv."
+            " Without article_number: returns numbered headline list."
+            " IMPORTANT: read ALL headlines to the user, do not skip any."
+            " With article_number: fetches full article text."
+            " When reading an article, retell it in detail — do not shorten or summarize briefly."
+            " Example flow: first call without article_number, read all headlines,"
+            " then user picks a number, call with article_number to read that article in full."
         ),
         "params_json": (
             '{"url": {"type": "string", "description": "RSS feed URL"},'
-            ' "count": {"type": "number", "description": "Number of articles (default 5)"}}'
+            ' "count": {"type": "number", "description": "Number of headlines (default 10)"},'
+            ' "article_number": {"type": "number",'
+            ' "description": "Article number from headline list to read in full"}}'
         ),
         "code": textwrap.dedent("""\
             from homeassistant.helpers.aiohttp_client import async_get_clientsession
             import xml.etree.ElementTree as ET
+            import asyncio
             import re
             url = params.get("url", "https://rus.delfi.lv/rss/index.xml")
             if url and not url.startswith(("http://", "https://")):
                 url = "https://" + url
-            count = int(params.get("count", 5))
+            count = int(params.get("count", 10))
+            article_num = params.get("article_number")
             session = async_get_clientsession(hass)
             async with session.get(url) as resp:
                 raw = await resp.read()
@@ -133,10 +142,11 @@ TOOL_TEMPLATES: dict[str, dict[str, str]] = {
             try:
                 root = ET.fromstring(raw)
                 for item in root.findall(".//item")[:count]:
-                    title = item.findtext("title", "")
-                    link = item.findtext("link", "")
-                    desc = item.findtext("description", "")
-                    items.append({"title": title, "link": link, "description": desc[:200]})
+                    title = item.findtext("title", "").strip()
+                    link = item.findtext("link", "").strip()
+                    cat_el = item.find("category")
+                    cat = cat_el.text.strip() if cat_el is not None and cat_el.text else ""
+                    items.append({"title": title, "link": link, "category": cat})
             except ET.ParseError:
                 text = raw.decode("utf-8", errors="replace")
                 for m in re.finditer(r"<item[^>]*>(.*?)</item>", text, re.DOTALL):
@@ -145,13 +155,28 @@ TOOL_TEMPLATES: dict[str, dict[str, str]] = {
                     block = m.group(1)
                     t = re.search(r"<title[^>]*>(.*?)</title>", block, re.DOTALL)
                     l = re.search(r"<link[^>]*>(.*?)</link>", block, re.DOTALL)
-                    d = re.search(r"<description[^>]*>(.*?)</description>", block, re.DOTALL)
                     title = t.group(1).strip() if t else ""
                     link = l.group(1).strip() if l else ""
-                    desc = re.sub(r"<[^>]+>", "", d.group(1).strip() if d else "")[:200]
                     if title or link:
-                        items.append({"title": title, "link": link, "description": desc})
-            return {"news": items, "source": url}"""),
+                        items.append({"title": title, "link": link, "category": ""})
+            if article_num is not None:
+                idx = int(article_num) - 1
+                if idx < 0 or idx >= len(items):
+                    return {"error": f"Article {article_num} not found. Available: 1-{len(items)}"}
+                article = items[idx]
+                try:
+                    async with asyncio.timeout(10):
+                        async with session.get(article["link"]) as r:
+                            html = await r.text()
+                    text = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL)
+                    text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL)
+                    text = re.sub(r"<(?:nav|header|footer|aside)[^>]*>.*?</(?:nav|header|footer|aside)>", "", text, flags=re.DOTALL)
+                    text = re.sub(r"<[^>]+>", " ", text)
+                    text = " ".join(text.split())
+                    return {"title": article["title"], "content": text[:4000]}
+                except Exception:
+                    return {"title": article["title"], "content": "Failed to fetch article", "link": article["link"]}
+            return {"headlines": [{"n": i + 1, **item} for i, item in enumerate(items)], "source": url}"""),
     },
     "web_search": {
         "label": "Web Search (DuckDuckGo)",

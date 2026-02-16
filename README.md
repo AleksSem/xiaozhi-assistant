@@ -247,7 +247,7 @@ The quickest way to add a tool — pick a ready-made template and customize it:
 | Random Joke (Russian) | Fetches a random joke from rzhunemogu.ru |
 | Current Weather (Open-Meteo) | Current weather for any location, no API key |
 | Fetch Webpage | Fetches and cleans HTML from any URL |
-| RSS News Reader | Reads news from any RSS feed (default: delfi.lv) |
+| RSS News Reader | Two-step news reader: lists numbered headlines from any RSS feed (default: delfi.lv), then fetches full article text by number |
 | Web Search (DuckDuckGo) | Searches the internet via DuckDuckGo, no API key |
 
 ### How It Works
