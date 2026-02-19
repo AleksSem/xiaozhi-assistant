@@ -1,7 +1,7 @@
-"""Base WebSocket client with reconnection logic.
+"""Base WebSocket client with reconnection and keepalive logic.
 
 Provides shared connect/reconnect/disconnect/listener patterns used by
-XiaozhiWebSocketClient.
+XiaozhiWebSocketClient and MCPWebSocketClient.
 """
 
 from __future__ import annotations
@@ -19,9 +19,9 @@ import websockets
 from websockets.asyncio.client import ClientConnection
 
 from .const import (
-    RECONNECT_BACKOFF_FACTOR,
-    RECONNECT_MAX_DELAY,
-    RECONNECT_MIN_DELAY,
+    KEEPALIVE_INTERVAL,
+    KEEPALIVE_TIMEOUT,
+    RECONNECT_DELAYS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -31,16 +31,22 @@ _CONNECT_TIMEOUT = 30
 
 
 class BaseWebSocketClient(ABC):
-    """Base WebSocket client with reconnection and SSL support."""
+    """Base WebSocket client with reconnection, keepalive, and SSL support."""
 
     def __init__(self) -> None:
         """Initialize the base client."""
         self._ws: ClientConnection | None = None
         self._listener_task: asyncio.Task[None] | None = None
+        self._keepalive_task: asyncio.Task[None] | None = None
         self._reconnect_task: asyncio.Task[None] | None = None
-        self._reconnect_delay = RECONNECT_MIN_DELAY
+        self._reconnect_step = 0
         self._should_reconnect = False
         self._connected = False
+
+    @property
+    def _log_name(self) -> str:
+        """Return a human-readable name for log messages."""
+        return "WebSocket"
 
     @property
     def is_connected(self) -> bool:
@@ -83,8 +89,8 @@ class BaseWebSocketClient(ABC):
             for key, value in headers.items():
                 if key.lower() == "authorization" and value:
                     _LOGGER.warning(
-                        "Sending auth token over unencrypted ws:// connection to %s",
-                        self._sanitize_url(url),
+                        "%s sending auth token over unencrypted ws:// connection to %s",
+                        self._log_name, self._sanitize_url(url),
                     )
                     break
 
@@ -101,18 +107,19 @@ class BaseWebSocketClient(ABC):
                     url,
                     additional_headers=headers,
                     ssl=ssl_context,
+                    ping_interval=None,  # we handle keepalive ourselves
                 ),
                 timeout=_CONNECT_TIMEOUT,
             )
             self._connected = True
-            self._reconnect_delay = RECONNECT_MIN_DELAY
-            _LOGGER.debug("WebSocket connected to %s", self._sanitize_url(url))
+            self._reconnect_step = 0
+            _LOGGER.debug("%s connected to %s", self._log_name, self._sanitize_url(url))
 
             await self._on_connected()
 
-            self._listener_task = asyncio.get_running_loop().create_task(
-                self._listener_loop()
-            )
+            loop = asyncio.get_running_loop()
+            self._listener_task = loop.create_task(self._listener_loop())
+            self._keepalive_task = loop.create_task(self._keepalive_loop())
 
         except Exception:
             self._connected = False
@@ -131,23 +138,49 @@ class BaseWebSocketClient(ABC):
                 try:
                     data = json.loads(message)
                 except json.JSONDecodeError:
-                    _LOGGER.warning("Received malformed JSON: %s", message[:200])
+                    _LOGGER.warning(
+                        "%s received malformed JSON: %s",
+                        self._log_name, message[:200],
+                    )
                     continue
 
                 await self._handle_text_message(data)
 
         except websockets.ConnectionClosed as exc:
-            _LOGGER.warning("WebSocket connection closed: %s", exc)
+            _LOGGER.warning("%s connection closed: %s", self._log_name, exc)
         except Exception:
-            _LOGGER.exception("Error in WebSocket listener")
+            _LOGGER.exception("Error in %s listener", self._log_name)
         finally:
             self._connected = False
+            self._stop_keepalive()
             self._on_disconnected()
             if self._should_reconnect:
                 self._schedule_reconnect()
 
+    async def _keepalive_loop(self) -> None:
+        """Periodically ping the server to detect dead connections."""
+        assert self._ws is not None
+
+        while True:
+            await asyncio.sleep(KEEPALIVE_INTERVAL)
+            try:
+                pong = await self._ws.ping()
+                await asyncio.wait_for(pong, timeout=KEEPALIVE_TIMEOUT)
+                _LOGGER.debug("%s keepalive ok", self._log_name)
+            except Exception:
+                _LOGGER.warning(
+                    "%s keepalive failed, closing connection", self._log_name
+                )
+                await self._ws.close()
+                return
+
+    def _stop_keepalive(self) -> None:
+        """Cancel the keepalive task if running."""
+        if self._keepalive_task and not self._keepalive_task.done():
+            self._keepalive_task.cancel()
+
     def _schedule_reconnect(self) -> None:
-        """Schedule a reconnection attempt with exponential backoff."""
+        """Schedule a reconnection attempt."""
         if self._reconnect_task and not self._reconnect_task.done():
             return
 
@@ -156,29 +189,32 @@ class BaseWebSocketClient(ABC):
         )
 
     async def _reconnect_loop(self) -> None:
-        """Reconnect with exponential backoff."""
+        """Reconnect with fixed delay schedule."""
         while self._should_reconnect:
+            delay = RECONNECT_DELAYS[
+                min(self._reconnect_step, len(RECONNECT_DELAYS) - 1)
+            ]
             _LOGGER.info(
-                "Reconnecting in %s seconds...", self._reconnect_delay
+                "%s reconnecting in %s seconds...",
+                self._log_name, delay,
             )
-            await asyncio.sleep(self._reconnect_delay)
+            await asyncio.sleep(delay)
 
             try:
                 await self._connect_once()
-                _LOGGER.info("Reconnected successfully")
+                _LOGGER.info("%s reconnected successfully", self._log_name)
                 return
             except Exception:
-                _LOGGER.warning("Reconnection failed", exc_info=True)
-                self._reconnect_delay = min(
-                    self._reconnect_delay * RECONNECT_BACKOFF_FACTOR,
-                    RECONNECT_MAX_DELAY,
+                _LOGGER.warning(
+                    "%s reconnection failed", self._log_name, exc_info=True
                 )
+                self._reconnect_step += 1
 
     async def disconnect(self) -> None:
         """Disconnect and stop reconnection attempts."""
         self._should_reconnect = False
 
-        for task in (self._reconnect_task, self._listener_task):
+        for task in (self._reconnect_task, self._listener_task, self._keepalive_task):
             if task and not task.done():
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -186,6 +222,7 @@ class BaseWebSocketClient(ABC):
 
         self._reconnect_task = None
         self._listener_task = None
+        self._keepalive_task = None
 
         if self._ws:
             await self._ws.close()

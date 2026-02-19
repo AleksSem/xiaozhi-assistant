@@ -49,6 +49,11 @@ class XiaozhiWebSocketClient(BaseWebSocketClient):
         self._active_voice_session: VoicePipelineSession | None = None
 
     @property
+    def _log_name(self) -> str:
+        """Return name for log messages."""
+        return "Xiaozhi WebSocket"
+
+    @property
     def state(self) -> ConnectionState:
         """Return the current connection state."""
         return self._state

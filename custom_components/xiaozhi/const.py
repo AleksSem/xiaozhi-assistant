@@ -69,7 +69,9 @@ OTA_BOARD_TYPE = "ha-integration"
 OTA_BOARD_NAME = "HomeAssistant"
 OTA_DEFAULT_TIMEOUT_MS = 300000
 
-# Reconnection
-RECONNECT_MIN_DELAY = 2
-RECONNECT_MAX_DELAY = 60
-RECONNECT_BACKOFF_FACTOR = 2
+# Reconnection schedule (seconds) — fixed steps instead of exponential
+RECONNECT_DELAYS = (5, 10, 30, 60, 300, 600)
+
+# Keepalive
+KEEPALIVE_INTERVAL = 60   # send WS ping every 60s
+KEEPALIVE_TIMEOUT = 10    # pong must arrive within 10s

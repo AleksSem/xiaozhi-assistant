@@ -32,6 +32,11 @@ class MCPWebSocketClient(BaseWebSocketClient):
         self._url = url
         self._mcp_handler = mcp_handler
 
+    @property
+    def _log_name(self) -> str:
+        """Return name for log messages."""
+        return "MCP WebSocket"
+
     def _get_ws_url(self) -> str:
         """Return the MCP WebSocket URL."""
         return self._url
@@ -39,6 +44,12 @@ class MCPWebSocketClient(BaseWebSocketClient):
     async def _on_connected(self) -> None:
         """Log connection."""
         _LOGGER.info("MCP WebSocket connected to %s", self._sanitize_url(self._url))
+
+    def _on_disconnected(self) -> None:
+        """Log MCP connection loss."""
+        _LOGGER.warning(
+            "MCP WebSocket disconnected from %s", self._sanitize_url(self._url)
+        )
 
     async def _handle_text_message(self, data: dict[str, Any]) -> None:
         """Handle incoming MCP JSON-RPC message."""
